@@ -664,6 +664,7 @@ body{position:relative}
 "Select an event for details. When an event needs helpers, you'll find a SignUpGenius link there to pick a job. We share times and places by email, on flyers, and in the weekly newsletter.": "Seleccione un evento para ver los detalles. Cuando un evento necesita ayuda, encontrará allí un enlace de SignUpGenius para elegir una tarea. Compartimos horarios y lugares por correo electrónico, en volantes y en el boletín semanal.",
 "Yes. Event-day jobs are posted on SignUpGenius. Open the event on the home page and select \"Sign up on SignUpGenius.\" If there's no link yet, email <a href=\"mailto:fumnsparents@gmail.com\">fumnsparents@gmail.com</a> and we'll find a spot close to the date.": "Sí. Las tareas para el día del evento se publican en SignUpGenius. Abra el evento en la página principal y seleccione \"Inscríbase en SignUpGenius\". Si todavía no hay enlace, escriba a <a href=\"mailto:fumnsparents@gmail.com\">fumnsparents@gmail.com</a> y le buscaremos un lugar cerca de la fecha.",
 "Sign up on SignUpGenius": "Inscríbase en SignUpGenius",
+"Reserve at My Gym": "Reserve en My Gym",
 "How do I sign up to help at an event?": "¿Cómo me inscribo para ayudar en un evento?",
 "With gratitude,<br><b>Amanda Masterson</b> and <b>Stephanie Grilo</b>, PA Co-Presidents": "Con gratitud,<br><b>Amanda Masterson</b> y <b>Stephanie Grilo</b>, copresidentas de la PA",
 "See how much we've raised": "Vea cuánto hemos recaudado",
@@ -1018,7 +1019,7 @@ body{position:relative}
 
   // Live data from the published "Web" tabs of the PA Master Sheet.
   // If a link is blank or the sheet can't be reached, the built-in data above is used.
-  function parseCSV(text){
+  function parseCSV(text, need){
     var rows = [], row = [], f = '', q = false;
     for (var i = 0; i < text.length; i++) {
       var c = text[i];
@@ -1029,19 +1030,23 @@ body{position:relative}
       else if (c !== '\r') f += c;
     }
     if (f !== '' || row.length) { row.push(f); rows.push(row); }
+    // Each tab has a note above its headings, so start at the row holding this tab's heading.
+    var at = 0;
+    rows.some(function(r, i){ if (r.some(function(x){ return need.indexOf(x.trim().toLowerCase()) > -1; })) { at = i; return true; } });
+    rows = rows.slice(at);
     if (!rows.length) return [];
     var head = rows.shift().map(function(x){ return x.trim().toLowerCase(); });
     return rows.filter(function(r){ return r.some(function(x){ return x.trim(); }); }).map(function(r){
       var o = {}; head.forEach(function(k, j){ o[k] = (r[j] || '').trim(); }); return o;
     });
   }
-  function getTab(url){
+  function getTab(url, need){
     if (!url || !window.fetch) return Promise.resolve(null);
     var ctl = window.AbortController ? new AbortController() : null;
     var timer = setTimeout(function(){ if (ctl) ctl.abort(); }, 5000);
     return fetch(url, ctl ? {signal: ctl.signal, cache: 'no-store'} : {cache: 'no-store'})
       .then(function(r){ clearTimeout(timer); if (!r.ok) throw 0; return r.text(); })
-      .then(parseCSV).catch(function(){ return null; });
+      .then(function(text){ return parseCSV(text, need); }).catch(function(){ return null; });
   }
   function num(s){ var n = parseFloat(String(s || '').replace(/[$,\s]/g, '')); return isNaN(n) ? 0 : n; }
   function iso(s){
@@ -1051,7 +1056,8 @@ body{position:relative}
     var d = new Date(s); return isNaN(d) ? '' : d.getFullYear() + '-' + ('0' + (d.getMonth()+1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
   }
   var extraES = {};
-  Promise.all(['fundraising','events','teams','meetings'].map(function(k){ return getTab(cfg[k]); })).then(function(t){
+  var HEAD = {fundraising: ['source', 'item'], events: ['event'], teams: ['team'], meetings: ['date']};
+  Promise.all(['fundraising','events','teams','meetings'].map(function(k){ return getTab(cfg[k], HEAD[k]); })).then(function(t){
     var d = base;
     if (t[0] && t[0].length) {
       var src = [];
@@ -1066,7 +1072,7 @@ body{position:relative}
     if (t[1] && t[1].length) {
       var ev = t[1].filter(function(r){ return (r.event || '') && (r['show on website'] || 'yes').toLowerCase() !== 'no'; }).map(function(r){
         if (r['spanish description']) extraES[r.description] = r['spanish description'];
-        return {season: r.season || 'Fall', short: r['short date'] || r['full date'] || '', what: r.event, when: r['full date'] || r['short date'] || '', about: r.description || '', tag: r.tag || '', signupUrl: r['signupgenius link'] || ''};
+        return {season: r.season || 'Fall', short: r['short date'] || r['full date'] || '', what: r.event, when: r['full date'] || r['short date'] || '', about: r.description || '', tag: r.tag || '', signupUrl: r['signupgenius link'] || '', signupLabel: r['button label'] || ''};
       });
       if (ev.length) d.dates = ev;
     }
@@ -1177,7 +1183,7 @@ body{position:relative}
     btn.appendChild(el('span','plus','+')); li.appendChild(btn);
     var det = el('div','detail'); det.id = 'ev-' + i; det.hidden = true;
     det.appendChild(el('div','detail-when', d.when)); det.appendChild(el('p', null, d.about));
-    if (d.signupUrl && /^https?:\/\//.test(d.signupUrl)) { var sg = el('a', 'pill sg-btn', t('Sign up on SignUpGenius')); sg.href = d.signupUrl; sg.target = '_blank'; sg.rel = 'noopener'; det.appendChild(sg); }
+    if (d.signupUrl && /^https?:\/\//.test(d.signupUrl)) { var sg = el('a', 'pill sg-btn', t(d.signupLabel || 'Sign up on SignUpGenius')); sg.href = d.signupUrl; sg.target = '_blank'; sg.rel = 'noopener'; det.appendChild(sg); }
     li.appendChild(det);
     btn.addEventListener('click', function(){ var o = btn.getAttribute('aria-expanded') === 'true'; btn.setAttribute('aria-expanded', o ? 'false' : 'true'); if (o) slideClose(det, function(){ det.hidden = true; }); else { det.hidden = false; slideOpen(det); } });
     (cols[d.season] || cols.Spring).appendChild(li);
