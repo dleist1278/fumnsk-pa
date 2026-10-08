@@ -182,6 +182,8 @@ body{position:relative}
 .detail .sg-btn:hover{filter:brightness(1.08)}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .detail .sg-btn{color:#02314c}}
 :root[data-theme="dark"] .detail .sg-btn{color:#02314c}
+.past-ev ul{list-style:none;margin:0;padding:0}
+.ev-empty{margin-top:1.1rem;color:var(--muted)}
 .detail-when{font-weight:700;color:var(--accent);font-size:.85rem;margin-bottom:.2rem}
 
 /* Quick links: quiet rows, not buttons */
@@ -672,6 +674,8 @@ body{position:relative}
 "Yes. Event-day jobs are posted on SignUpGenius. Open the event on the home page and select \"Sign up on SignUpGenius.\" If there's no link yet, email <a href=\"mailto:fumnsparents@gmail.com\">fumnsparents@gmail.com</a> and we'll find a spot close to the date.": "Sí. Las tareas para el día del evento se publican en SignUpGenius. Abra el evento en la página principal y seleccione \"Inscríbase en SignUpGenius\". Si todavía no hay enlace, escriba a <a href=\"mailto:fumnsparents@gmail.com\">fumnsparents@gmail.com</a> y le buscaremos un lugar cerca de la fecha.",
 "Sign up on SignUpGenius": "Inscríbase en SignUpGenius",
 "Reserve at My Gym": "Reserve su lugar en My Gym",
+"Past events": "Eventos pasados",
+"New events will be posted soon.": "Pronto publicaremos nuevos eventos.",
 "How do I sign up to help at an event?": "¿Cómo me inscribo para ayudar en un evento?",
 "With gratitude,<br><b>Amanda Masterson</b> and <b>Stephanie Grilo</b>, PA Co-Presidents": "Con gratitud,<br><b>Amanda Masterson</b> y <b>Stephanie Grilo</b>, copresidentas de la PA",
 "See how much we've raised": "Vea cuánto hemos recaudado",
@@ -1062,6 +1066,24 @@ body{position:relative}
     if ((m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/))) { var y = m[3].length === 2 ? '20' + m[3] : m[3]; return y + '-' + ('0' + m[1]).slice(-2) + '-' + ('0' + m[2]).slice(-2); }
     var d = new Date(s); return isNaN(d) ? '' : d.getFullYear() + '-' + ('0' + (d.getMonth()+1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
   }
+  // End date from the sheet: 2026-10-09 or 10/9/2026. Anything else counts as no exact date.
+  function endDay(s){
+    s = String(s || '').trim(); var m, y, mo, d;
+    if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))) { y = +m[1]; mo = +m[2]; d = +m[3]; }
+    else if ((m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/))) { y = +m[3]; mo = +m[1]; d = +m[2]; }
+    else return '';
+    var c = new Date(Date.UTC(y, mo - 1, d));
+    if (c.getUTCFullYear() !== y || c.getUTCMonth() !== mo - 1 || c.getUTCDate() !== d) return '';
+    return y + '-' + ('0' + mo).slice(-2) + '-' + ('0' + d).slice(-2);
+  }
+  // Today's date in New York, or '' if the browser can't tell (then nothing is archived).
+  function todayNY(){
+    try {
+      var p = {};
+      new Intl.DateTimeFormat('en-US', {timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit'}).formatToParts(new Date()).forEach(function(x){ p[x.type] = x.value; });
+      return p.year && p.month && p.day ? p.year + '-' + p.month + '-' + p.day : '';
+    } catch (e) { return ''; }
+  }
   var extraES = {};
   var HEAD = {fundraising: ['source', 'item'], events: ['event'], teams: ['team'], meetings: ['date']};
   Promise.all(['fundraising','events','teams','meetings'].map(function(k){ return getTab(cfg[k], HEAD[k]); })).then(function(t){
@@ -1079,7 +1101,7 @@ body{position:relative}
     if (t[1] && t[1].length) {
       var ev = t[1].filter(function(r){ return (r.event || '') && (r['show on website'] || 'yes').toLowerCase() !== 'no'; }).map(function(r){
         if (r['spanish description']) extraES[r.description] = r['spanish description'];
-        return {season: r.season || 'Fall', short: r['short date'] || r['full date'] || '', what: r.event, when: r['full date'] || r['short date'] || '', about: r.description || '', tag: r.tag || '', signupUrl: r['signupgenius link'] || '', signupLabel: r['button label'] || ''};
+        return {season: r.season || 'Fall', short: r['short date'] || r['full date'] || '', what: r.event, when: r['full date'] || r['short date'] || '', about: r.description || '', tag: r.tag || '', signupUrl: r['signupgenius link'] || '', signupLabel: r['button label'] || '', end: endDay(r['end date'])};
       });
       if (ev.length) d.dates = ev;
     }
@@ -1179,22 +1201,33 @@ body{position:relative}
   } else fillNow();
   document.getElementById('fund-more').addEventListener('toggle', function(){ if (this.open) setTimeout(fillNow, 60); });
 
-  // Events
-  var dates = document.getElementById('dates'), cols = {};
-  ['Fall','Winter','Spring'].forEach(function(s){ var c = el('div'); c.appendChild(el('h3', null, s)); var ul = el('ul'); c.appendChild(ul); cols[s] = ul; dates.appendChild(c); });
-  (data.dates || []).forEach(function(d, i){
+  // Events: each event moves to Past events the day after its End date (New York time).
+  var dates = document.getElementById('dates'), cols = {}, today = todayNY(), upcoming = [], past = [];
+  (data.dates || []).forEach(function(d){ (today && d.end && d.end < today ? past : upcoming).push(d); });
+  past.sort(function(a, b){ return a.end < b.end ? 1 : a.end > b.end ? -1 : 0; });
+  function eventRow(d, id, closed){
     var li = el('li'), btn = el('button', 'row'); btn.type = 'button';
-    btn.setAttribute('aria-expanded','false'); btn.setAttribute('aria-controls','ev-' + i);
+    btn.setAttribute('aria-expanded','false'); btn.setAttribute('aria-controls', id);
     btn.appendChild(el('span','when', d.short || d.when));
     var w = el('span','what', d.what); if (d.tag) w.appendChild(el('span','tag', d.tag)); btn.appendChild(w);
     btn.appendChild(el('span','plus','+')); li.appendChild(btn);
-    var det = el('div','detail'); det.id = 'ev-' + i; det.hidden = true;
+    var det = el('div','detail'); det.id = id; det.hidden = true;
     det.appendChild(el('div','detail-when', d.when)); det.appendChild(el('p', null, d.about));
-    if (d.signupUrl && /^https?:\/\//.test(d.signupUrl)) { var sg = el('a', 'pill sg-btn', t(d.signupLabel || 'Sign up on SignUpGenius')); sg.href = d.signupUrl; sg.target = '_blank'; sg.rel = 'noopener'; det.appendChild(sg); }
+    if (!closed && d.signupUrl && /^https?:\/\//.test(d.signupUrl)) { var sg = el('a', 'pill sg-btn', t(d.signupLabel || 'Sign up on SignUpGenius')); sg.href = d.signupUrl; sg.target = '_blank'; sg.rel = 'noopener'; det.appendChild(sg); }
     li.appendChild(det);
     btn.addEventListener('click', function(){ var o = btn.getAttribute('aria-expanded') === 'true'; btn.setAttribute('aria-expanded', o ? 'false' : 'true'); if (o) slideClose(det, function(){ det.hidden = true; }); else { det.hidden = false; slideOpen(det); } });
-    (cols[d.season] || cols.Spring).appendChild(li);
-  });
+    return li;
+  }
+  ['Fall','Winter','Spring'].forEach(function(s){ var c = el('div'); c.appendChild(el('h3', null, s)); var ul = el('ul'); c.appendChild(ul); cols[s] = ul; dates.appendChild(c); });
+  upcoming.forEach(function(d, i){ (cols[d.season] || cols.Spring).appendChild(eventRow(d, 'ev-' + i, false)); });
+  ['Fall','Winter','Spring'].forEach(function(s){ if (!cols[s].children.length) cols[s].parentNode.hidden = true; });
+  if (!upcoming.length) dates.parentNode.appendChild(el('p', 'ev-empty', 'New events will be posted soon.'));
+  if (past.length) {
+    var pe = el('details', 'fund-more past-ev'), pl = el('ul');
+    pe.appendChild(el('summary', null, 'Past events'));
+    past.forEach(function(d, i){ pl.appendChild(eventRow(d, 'ev-p' + i, true)); });
+    pe.appendChild(pl); dates.parentNode.appendChild(pe);
+  }
 
   // Quick links
   var links = document.getElementById('links');
